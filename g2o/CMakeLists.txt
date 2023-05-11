@@ -2,6 +2,7 @@ add_subdirectory(EXTERNAL)
 add_subdirectory(autodiff)
 add_subdirectory(stuff)
 add_subdirectory(core)
+add_subdirectory(gpu)
 
 if(G2O_BUILD_APPS)
   add_subdirectory(apps)

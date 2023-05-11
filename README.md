@@ -1,3 +1,61 @@
+# g2o with GPU Block Solver
+
+This is a custom version of g2o which implements GPU acceleration for the block solver component. The modified block solver performs general calculations using Vulkan compute shaders and is compatible with g2o's existing OpenMP support for further performance improvement. The block solver can be used in place of the original to obtain a small speedup for bundle adjustment problems.
+
+The performance improvement partially depends on the workload (size, parameterization, problem structure, constraints, etc.). For small visual BA problems, in which pose and landmark variables have fixed sizes, the original CPU block solver may provide better performance via Eigen's vectorization support. The GPU block solver should work better for medium to large problems with variable-sized blocks, especially when combined with the PCG linear solver.
+
+Our modifications are intended to work as a drop-in solution for existing g2o-based projects. It is expected that the speedup will be limited since there is no GPU acceleration for constraint-specific calculations.
+## Example Usage
+
+For usage, please refer to the implementation of the `bal_gpu` example. The datasets are available from [here](https://grail.cs.washington.edu/projects/bal/).
+
+You may run the example with the following command:
+```
+./bal_gpu -v -gpu -pcg -implicit -i 10 -lambda 1e-5 ~/bal/problem-1778-993923-pre.txt 
+```
+
+**Note:** It may be necessary to lock the CPU and GPU frequencies to observe consistent performance.
+
+## Linear Solvers
+
+- Eigen Sparse/Dense LLT/LDLT (CPU)
+- Block PCG (GPU)
+  - Supports explicit and implicit evaluation modes, which have different memory and performance characteristics
+
+In general, Eigen solvers may work better for small/local BA problems, while the PCG solver works better for larger problems. Optimal PCG parameters must be determined experimentally. 
+
+An interface to implement support for custom linear solvers is also provided. 
+
+## Limitations
+
+- Only double-precision is supported
+- Landmark variables must have no more than four parameters
+  - Landmarks must be marginalized
+  - No landmark-landmark constraints
+- No GPU acceleration for constraint-specific calculations
+- Hessian structure cannot be modified once built
+- Some other functionality is unsupported
+  - Saving the Hessian
+  - Debug output
+  - computeMarginals
+
+## Components and License
+
+- The block solver implementation is in the `g2o/gpu` directory. For this, and edits/examples, the original g2o license applies.
+- It depends on the `compute-engine` submodule, which is licensed under MIT. It also contains other dependencies. Please refer to their individual licenses for more information.
+  - See its README for build instructions.
+
+
+## Referencing
+
+- If you use the GPU modifications in your own work, please cite our ICRA 2023 paper 
+"Improving the Performance of Local Bundle Adjustment for Visual-Inertial SLAM with Efficient Use of GPU Resources" by Shishir Gopinath, Karthik Dantu, and Steven Y. Ko.
+- For g2o, please refer to its paper as well (see below)
+
+Original g2o README follows below.
+
+<br>
+
 # g2o - General Graph Optimization
 
 Linux/Mac: [![CI](https://github.com/RainerKuemmerle/g2o/actions/workflows/ci.yml/badge.svg?event=push)](https://github.com/RainerKuemmerle/g2o/actions/workflows/ci.yml)

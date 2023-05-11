@@ -1,0 +1,3 @@
+[submodule "g2o/EXTERNAL/compute-engine"]
+	path = g2o/EXTERNAL/compute-engine
+	url = git@github.com:sfu-rsl/compute-engine.git
