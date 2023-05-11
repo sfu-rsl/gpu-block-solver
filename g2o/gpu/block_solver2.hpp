@@ -37,7 +37,6 @@ namespace g2o {
 
 using namespace std;
 using namespace Eigen;
-constexpr auto alloc_type = compute::BufferType::DeviceCached;
 
 BlockSolver2::BlockSolver2(compute::ComputeEngine* engine, compute::LinearSolver<double>* linearSolver) :
   BlockSolverBase(),
@@ -55,6 +54,8 @@ BlockSolver2::BlockSolver2(compute::ComputeEngine* engine, compute::LinearSolver
   _use_implicit_schur = false;
   // gpu
   _ba_stats = nullptr;
+  _alloc_type = compute::BufferType::DeviceCached;
+
 }
 
 
@@ -70,10 +71,10 @@ void BlockSolver2::resize(const std::vector<BlockIndex> & blockPoseIndices,
   if (_doSchur) {
     // the following two are only used in schur
     assert(_sizePoses > 0 && "allocating with wrong size");
-    _bl = engine->create_buffer<double>(nullptr, _sizeLandmarks, alloc_type);
-    _bschur = engine->create_buffer<double>(nullptr, _sizePoses, alloc_type);
-    _xp = engine->create_buffer<double>(nullptr, _sizePoses, alloc_type);
-    _xl = engine->create_buffer<double>(nullptr, _sizeLandmarks, alloc_type);
+    _bl = engine->create_buffer<double>(nullptr, _sizeLandmarks, _alloc_type);
+    _bschur = engine->create_buffer<double>(nullptr, _sizePoses, _alloc_type);
+    _xp = engine->create_buffer<double>(nullptr, _sizePoses, _alloc_type);
+    _xl = engine->create_buffer<double>(nullptr, _sizeLandmarks, _alloc_type);
 
     sync_x = engine->create_op_sequence();
     sync_x->sync_device<double>({_xp, _xl});
@@ -323,11 +324,11 @@ bool BlockSolver2::buildStructure(bool zeroBlocks)
   auto tprep = get_monotonic_time();
   bool explicit_schur = !implicit_schur();
   // code for allocating matrices (slow)
-  gpu_alloc_task = std::async(async_mode, [engine=engine, _Hpp=_Hpp, _Hll=_Hll, _Hpl=_Hpl, zeroBlocks, 
+  gpu_alloc_task = std::async(async_mode, [_alloc_type=_alloc_type, engine=engine, _Hpp=_Hpp, _Hll=_Hll, _Hpl=_Hpl, zeroBlocks, 
    &sync_H=sync_H, &set_lambda_seq=set_lambda_seq, &restore_diagonal_seq=restore_diagonal_seq, &_lambda=_lambda]() {
-    _Hpp->allocate_memory(alloc_type);
-    _Hll->allocate_memory(alloc_type);
-    _Hpl->allocate_memory(alloc_type);
+    _Hpp->allocate_memory(_alloc_type);
+    _Hll->allocate_memory(_alloc_type);
+    _Hpl->allocate_memory(_alloc_type);
     // prepare sync stuff
     // std::cout << "Rec sync H!";
     sync_H = engine->create_op_sequence();
@@ -377,7 +378,7 @@ bool BlockSolver2::buildStructure(bool zeroBlocks)
     return true;
   }
 
-  task_reserve_Hschur = std::async(async_mode, [_Hschur=_Hschur, _optimizer=_optimizer, explicit_schur]() {
+  task_reserve_Hschur = std::async(async_mode, [_alloc_type=_alloc_type, _Hschur=_Hschur, _optimizer=_optimizer, explicit_schur]() {
 
     if (explicit_schur) {
         for (size_t i = 0; i < _optimizer->indexMapping().size(); ++i) {
@@ -411,7 +412,7 @@ bool BlockSolver2::buildStructure(bool zeroBlocks)
         // also sort Hschur column indices for conversion to CSC later
       auto row_sort = std::async(async_mode, [&]() {_Hschur->sort_row_indices();});
       auto col_sort = std::async(async_mode, [&]() {_Hschur->sort_col_indices();});
-      _Hschur->allocate_memory(alloc_type);
+      _Hschur->allocate_memory(_alloc_type);
 
       row_sort.get();
       col_sort.get();

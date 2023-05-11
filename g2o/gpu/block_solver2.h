@@ -90,6 +90,10 @@ namespace g2o
       _use_implicit_schur = enable;
     }
 
+    void setAllocType(compute::BufferType allocation_type) {
+      _alloc_type = allocation_type;
+    }
+
   protected:
     void resize(const std::vector<BlockIndex> &blockPoseIndices,
                 int numPoseBlocks,
@@ -156,7 +160,7 @@ namespace g2o
 
     // gpu
     gpu::BAStats::BAStatistics *_ba_stats;
-
+    compute::BufferType _alloc_type;
 
 
   };

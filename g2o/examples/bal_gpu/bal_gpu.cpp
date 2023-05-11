@@ -321,10 +321,10 @@ int main(int argc, char** argv) {
           g2o::make_unique<BalBlockSolver>(std::move(linearSolver)));
   }
   else {
-  auto bs2 = std::make_unique<g2o::BlockSolver2X>(engine, linearSolver2);
+    auto bs2 = std::make_unique<g2o::BlockSolver2X>(engine, linearSolver2);
+    bs2->setAllocType(compute::BufferType::DeviceCached); // Try BufferType::Host for integrated GPUs
     bs2->setImplicitSchur(useImplicit);
-    solver =
-        new g2o::OptimizationAlgorithmLevenberg(std::move(bs2));
+    solver = new g2o::OptimizationAlgorithmLevenberg(std::move(bs2));
   }
 
   if (customLambda > 0.0) {
