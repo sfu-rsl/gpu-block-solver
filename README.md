@@ -1,10 +1,21 @@
 # g2o with GPU Block Solver
 
-This is a custom version of g2o which implements GPU acceleration for the block solver component. The modified block solver performs general calculations using Vulkan compute shaders and is compatible with g2o's existing OpenMP support for further performance improvement. The block solver can be used in place of the original to obtain a small speedup for bundle adjustment problems.
+This is a custom version of [g2o](https://github.com/RainerKuemmerle/g2o) which implements GPU acceleration for the block solver component. The modified block solver performs general calculations using Vulkan compute shaders and is compatible with g2o's existing OpenMP support for further performance improvement. The block solver can be used in place of the original to obtain a small speedup for bundle adjustment problems.
 
 The performance improvement partially depends on the workload (size, parameterization, problem structure, constraints, etc.). For small visual BA problems, in which pose and landmark variables have fixed sizes, the original CPU block solver may provide better performance via Eigen's vectorization support. The GPU block solver should work better for medium to large problems with variable-sized blocks, especially when combined with the PCG linear solver.
 
 Our modifications are intended to work as a drop-in solution for existing g2o-based projects. It is expected that the speedup will be limited since there is no GPU acceleration for constraint-specific calculations.
+
+## Cloning and Building
+
+This project uses submodules, which can be cloned easily using the `--recursive` option:
+```
+git clone https://github.com/sfu-rsl/gpu-block-solver.git --recursive
+```
+ 
+The same g2o build process applies, although there are [additional dependencies](https://github.com/sfu-rsl/compute-engine#building) for the Vulkan backend.
+
+
 ## Example Usage
 
 For usage, please refer to the implementation of the `bal_gpu` example. The datasets are available from [here](https://grail.cs.washington.edu/projects/bal/).
