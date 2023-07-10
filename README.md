@@ -60,7 +60,7 @@ An interface to implement support for custom linear solvers is also provided.
 ## Referencing
 
 - If you use the GPU modifications in your own work, please cite our ICRA 2023 paper 
-"Improving the Performance of Local Bundle Adjustment for Visual-Inertial SLAM with Efficient Use of GPU Resources" by Shishir Gopinath, Karthik Dantu, and Steven Y. Ko.
+[Improving the Performance of Local Bundle Adjustment for Visual-Inertial SLAM with Efficient Use of GPU Resources](https://ieeexplore.ieee.org/document/10160499) by Shishir Gopinath, Karthik Dantu, and Steven Y. Ko.
 - For g2o, please refer to its paper as well (see below)
 
 Original g2o README follows below.
