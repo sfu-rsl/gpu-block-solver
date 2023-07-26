@@ -41,6 +41,7 @@
 #include "g2o/stuff/command_args.h"
 
 // #define PRINT_TIMINGS
+#include <solver/backend/sycl/backend.hpp>
 #include "g2o/gpu/block_solver2.h"
 #include "g2o/gpu/BAStats.hpp"
 #include <solver/pcg.hpp>

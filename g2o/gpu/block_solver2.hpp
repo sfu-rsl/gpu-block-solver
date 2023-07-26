@@ -177,7 +177,7 @@ void BlockSolver2::deallocate()
 BlockSolver2::~BlockSolver2()
 {
   // backend-specific
-  #ifndef SOLVER_CPU_BACKEND
+  #ifdef CE_VULKAN
   auto stats = _ba_stats;
   if (stats) {
     auto vma_stats = engine->get_vma_statistics();
