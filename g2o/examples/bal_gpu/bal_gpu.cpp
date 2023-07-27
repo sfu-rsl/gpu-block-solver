@@ -225,6 +225,7 @@ int main(int argc, char** argv) {
   bool useImplicit;
   bool useHpp;
   bool useRelTol;
+  bool noSchur;
 
   double customLambda;
 
@@ -241,6 +242,7 @@ int main(int argc, char** argv) {
   arg.param("hpp", useHpp, false, "if using GPU, use Hpp preconditioner for implicit method");
   arg.param("reltol", useRelTol, false, "if using PCG, use relative tolerance");
   arg.param("lambda", customLambda, 0, "lambda");
+  arg.param("noschur", noSchur, false, "Disable Schur");
 
   arg.param("v", verbose, false, "verbose output of the optimization process");
   arg.param("stats", statsFilename, "", "specify a file for the statistics");
@@ -251,6 +253,7 @@ int main(int argc, char** argv) {
   arg.parseArgs(argc, argv);
 
   typedef g2o::BlockSolver<g2o::BlockSolverTraits<9, 3>> BalBlockSolver;
+  typedef g2o::BlockSolver<g2o::BlockSolverTraits<Eigen::Dynamic, Eigen::Dynamic>> BalBlockSolverDyn;
 #ifdef G2O_HAVE_CHOLMOD
   string choleskySolverName = "CHOLMOD";
   typedef g2o::LinearSolverCholmod<BalBlockSolver::PoseMatrixType>
@@ -259,13 +262,20 @@ int main(int argc, char** argv) {
   string choleskySolverName = "Eigen";
   typedef g2o::LinearSolverEigen<BalBlockSolver::PoseMatrixType>
       BalLinearSolver;
+  typedef g2o::LinearSolverEigen<BalBlockSolverDyn::PoseMatrixType>
+      BalLinearSolverDyn;
 #endif
   typedef g2o::LinearSolverPCG<BalBlockSolver::PoseMatrixType>
       BalLinearSolverPCG;
+  typedef g2o::LinearSolverPCG<BalBlockSolverDyn::PoseMatrixType>
+      BalLinearSolverPCGDyn;
 
   auto optimizer = std::make_unique<g2o::SparseOptimizer>();
   std::unique_ptr<g2o::LinearSolver<BalBlockSolver::PoseMatrixType>>
       linearSolver;
+  std::unique_ptr<g2o::LinearSolver<BalBlockSolverDyn::PoseMatrixType>>
+    linearSolverDyn;
+
   compute::LinearSolver<double>* linearSolver2 = nullptr;
 
   compute::ComputeEngine* engine = nullptr;
@@ -276,11 +286,21 @@ int main(int argc, char** argv) {
 
   if (usePCG) {
     cout << "Using PCG" << endl;
-    auto cpu_pcg = g2o::make_unique<BalLinearSolverPCG>();
-    cpu_pcg->setTolerance(PCG_TOL);
-    cpu_pcg->setAbsoluteTolerance(!useRelTol);
-    cpu_pcg->setMaxIterations(MAX_PCG_ITER);
-    linearSolver = std::move(cpu_pcg);
+    if (!noSchur) {
+      auto cpu_pcg = g2o::make_unique<BalLinearSolverPCG>();
+      cpu_pcg->setTolerance(PCG_TOL);
+      cpu_pcg->setAbsoluteTolerance(!useRelTol);
+      cpu_pcg->setMaxIterations(MAX_PCG_ITER);
+      linearSolver = std::move(cpu_pcg);
+    }
+    else {
+      auto cpu_pcg = g2o::make_unique<BalLinearSolverPCGDyn>();
+      cpu_pcg->setTolerance(PCG_TOL);
+      cpu_pcg->setAbsoluteTolerance(!useRelTol);
+      cpu_pcg->setMaxIterations(MAX_PCG_ITER);
+      linearSolverDyn = std::move(cpu_pcg);    
+    }
+
 
 
 
@@ -299,13 +319,23 @@ int main(int argc, char** argv) {
     
   } else {
     cout << "Using Cholesky: " << choleskySolverName << endl;
-    auto cholesky = g2o::make_unique<BalLinearSolver>();
-
     constexpr bool block_ordering = true;
 
-    cholesky->setBlockOrdering(block_ordering);
-    cholesky->setWriteDebug(false);
-    linearSolver = std::move(cholesky);
+    if (!noSchur) {
+      auto cholesky = g2o::make_unique<BalLinearSolver>();
+      cholesky->setBlockOrdering(block_ordering);
+      cholesky->setWriteDebug(false);
+      linearSolver = std::move(cholesky);
+    }
+    else {
+      auto cholesky = g2o::make_unique<BalLinearSolverDyn>();
+      cholesky->setBlockOrdering(block_ordering);
+      cholesky->setWriteDebug(false);
+      linearSolverDyn = std::move(cholesky);      
+    }
+
+
+
     // linearSolver2 =  new compute::LDLTSolver<double>();
     linearSolver2 =  new compute::LLTSolver<double>(block_ordering);
     
@@ -316,9 +346,17 @@ int main(int argc, char** argv) {
 
 
   if (!useGPU) {
+    if (!noSchur) {
       solver =
       new g2o::OptimizationAlgorithmLevenberg(
           g2o::make_unique<BalBlockSolver>(std::move(linearSolver)));
+    }
+    else {
+      solver =
+      new g2o::OptimizationAlgorithmLevenberg(
+          g2o::make_unique<BalBlockSolverDyn>(std::move(linearSolverDyn)));
+    }
+
   }
   else {
     auto bs2 = std::make_unique<g2o::BlockSolver2X>(engine, linearSolver2);
@@ -359,10 +397,14 @@ int main(int argc, char** argv) {
     }
 
     points.reserve(numPoints);
+    const auto marginalize = !noSchur;
+    if (noSchur) {
+      cout << "Schur elimination disabled!\n";
+    }
     for (int i = 0; i < numPoints; ++i, ++id) {
       VertexPointBAL* p = new VertexPointBAL;
       p->setId(id);
-      p->setMarginalized(true);
+      p->setMarginalized(marginalize);
       bool addedVertex = optimizer->addVertex(p);
       if (!addedVertex) {
         cerr << "failing adding vertex" << endl;
