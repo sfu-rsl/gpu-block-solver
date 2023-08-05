@@ -30,6 +30,7 @@ You may run the example with the following command:
 ## Linear Solvers
 
 - Eigen Sparse/Dense LLT/LDLT (CPU)
+- CUDA cuSOLVER Sparse LLT (GPU)
 - Block PCG (GPU)
   - Supports explicit and implicit evaluation modes, which have different memory and performance characteristics
 
