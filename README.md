@@ -41,8 +41,6 @@ An interface to implement support for custom linear solvers is also provided.
 
 - Only double-precision is supported
 - Landmark variables must have no more than four parameters
-  - Landmarks must be marginalized
-  - No landmark-landmark constraints
 - No GPU acceleration for constraint-specific calculations
 - Hessian structure cannot be modified once built
 - Some other functionality is unsupported
