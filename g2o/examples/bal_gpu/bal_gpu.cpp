@@ -40,11 +40,13 @@
 #include "g2o/solvers/pcg/linear_solver_pcg.h"
 #include "g2o/stuff/command_args.h"
 
-// #define PRINT_TIMINGS
+#define PRINT_TIMINGS
 #include "g2o/gpu/block_solver2.h"
 #include "g2o/gpu/BAStats.hpp"
 #include <solver/pcg.hpp>
-
+#ifdef CUDA_ENABLED
+#include <solver/linear_solver_cuda.hpp>
+#endif
 // Remove/comment out undef to re-enable
 #undef G2O_HAVE_CHOLMOD
 #if defined G2O_HAVE_CHOLMOD
@@ -336,8 +338,14 @@ int main(int argc, char** argv) {
 
 
 
-    // linearSolver2 =  new compute::LDLTSolver<double>();
+
+    #ifdef CUDA_ENABLED
+    cout << "Using cuSOLVER LLT" << endl;
+    linearSolver2 =  new compute::LLTSolverCUDA<double>(block_ordering);
+    #else
+    cout << "Using Eigen LLT" << endl;
     linearSolver2 =  new compute::LLTSolver<double>(block_ordering);
+    #endif
     
   }
 
