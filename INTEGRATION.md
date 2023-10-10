@@ -231,3 +231,6 @@ For Jetson devices, extra allocations can be avoided by setting:
 solver_ptr->setAllocType(compute::BufferType::Host);
 ```
 Additionally `jetson_clocks` can be used to lock the frequencies.
+## Important
+
+There is a bug in the levenberg implementation included in ORB-SLAM3 that was fixed in newer versions of g2o. It can cause the total error to increase if a bad parameter step is accepted. Please consider using the [updated implementation](https://github.com/sfu-rsl/gpu-block-solver/blob/aa783d6110187488b8b51ce609270ee7428a5d3c/g2o/core/optimization_algorithm_levenberg.cpp#L122-L146).

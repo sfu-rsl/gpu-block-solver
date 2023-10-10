@@ -15,6 +15,8 @@ git clone https://github.com/sfu-rsl/gpu-block-solver.git --recursive
  
 The same g2o build process applies, although there are [additional dependencies](https://github.com/sfu-rsl/compute-engine#building) for the Vulkan backend.
 
+For specific instructions on how to build for ORB-SLAM3, please see [this](INTEGRATION.md).
+
 
 ## Example Usage
 
