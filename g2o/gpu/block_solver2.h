@@ -104,6 +104,8 @@ namespace g2o
 
     bool implicit_schur();
 
+    void mapMemory();
+
 
     compute::ComputeEngine *engine;
 

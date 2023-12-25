@@ -32,6 +32,7 @@ You may run the example with the following command:
 ## Linear Solvers
 
 - Eigen Sparse/Dense LLT/LDLT (CPU)
+- CUDA cuSOLVER Sparse LLT (GPU)
 - Block PCG (GPU)
   - Supports explicit and implicit evaluation modes, which have different memory and performance characteristics
 
@@ -43,8 +44,6 @@ An interface to implement support for custom linear solvers is also provided.
 
 - Only double-precision is supported
 - Landmark variables must have no more than four parameters
-  - Landmarks must be marginalized
-  - No landmark-landmark constraints
 - No GPU acceleration for constraint-specific calculations
 - Hessian structure cannot be modified once built
 - Some other functionality is unsupported

@@ -68,14 +68,13 @@ void BlockSolver2::resize(const std::vector<BlockIndex> & blockPoseIndices,
 
   resizeVector(s);
 
-  if (_doSchur) {
-    // the following two are only used in schur
-    assert(_sizePoses > 0 && "allocating with wrong size");
-    _bl = engine->create_buffer<double>(nullptr, _sizeLandmarks, _alloc_type);
-    _bschur = engine->create_buffer<double>(nullptr, _sizePoses, _alloc_type);
-    _xp = engine->create_buffer<double>(nullptr, _sizePoses, _alloc_type);
-    _xl = engine->create_buffer<double>(nullptr, _sizeLandmarks, _alloc_type);
+  assert(_sizePoses > 0 && "allocating with wrong size");
+  _bschur = engine->create_buffer<double>(nullptr, _sizePoses, _alloc_type); // same size as _bp
+  _xp = engine->create_buffer<double>(nullptr, _sizePoses, _alloc_type);
 
+  if (_doSchur) {
+    _xl = engine->create_buffer<double>(nullptr, _sizeLandmarks, _alloc_type);
+    _bl = engine->create_buffer<double>(nullptr, _sizeLandmarks, _alloc_type);
     sync_x = engine->create_op_sequence();
     sync_x->sync_device<double>({_xp, _xl});
   }
@@ -250,9 +249,13 @@ bool BlockSolver2::buildStructure(bool zeroBlocks)
     blockPoseIndices.push_back(_sizePoses);
     blockLandmarkIndices.push_back(_sizeLandmarks);
   }
+  else if (_sizePoses && !_doSchur) {
+    blockPoseIndices.push_back(_sizePoses);
+  }
   else {
     throw std::runtime_error("BlockSolver2: Landmark or pose size was 0!");
   }
+
   // std::cout << "Resizing!";
   resize(blockPoseIndices, _numPoses, blockLandmarkIndices, _numLandmarks, sparseDim);
   // std::cout << "Done resizing!";
@@ -317,6 +320,79 @@ bool BlockSolver2::buildStructure(bool zeroBlocks)
     }
   }
 
+  if (! _doSchur) {
+    /* 
+      Since Hpp structure is known, we can exit early, but we need to do a few things first:
+      - Buffers for Hpp must be created
+      - Linear solver needs to be set up for Hpp
+      - Need to also set up the set/restore operations
+      - And also the transfer operations
+      - Finally, map H
+    */
+
+    // Allocate Hpp
+    gpu_alloc_task = std::async(async_mode, [_alloc_type=_alloc_type, engine=engine, _Hpp=_Hpp, zeroBlocks, 
+    &sync_H=sync_H, &set_lambda_seq=set_lambda_seq, &restore_diagonal_seq=restore_diagonal_seq, &_lambda=_lambda, 
+    &sync_x=sync_x, _xp=_xp, _bschur=_bschur, _linearSolver=_linearSolver, &Schur_seq=Schur_seq]() {
+      _Hpp->allocate_memory(_alloc_type);
+
+      if (zeroBlocks) {
+        _Hpp->zero_memory();
+      }
+
+      // Set up the set/restore diagonal operations
+      _lambda = engine->create_buffer<double>(nullptr, 1, compute::BufferType::DeviceCached);
+      set_lambda_seq = engine->create_op_sequence();
+      restore_diagonal_seq = engine->create_op_sequence();
+      set_lambda_seq->sync_device<double>({_lambda});
+      set_lambda_seq->insert_tc_barrier();
+      _Hpp->set_lambda(_lambda, set_lambda_seq, restore_diagonal_seq);
+
+      // Record transfer operations
+
+      // we need to transfer _Hpp and _bp to device memory
+      sync_H = engine->create_op_sequence();
+      sync_H->sync_device<double>({_Hpp->get_buffer(), _bschur});
+
+      // an operation for syncing _Hpp back
+      if (!_linearSolver->result_gpu()) { // this implies it's a CPU solver
+        Schur_seq = engine->create_op_sequence();
+        Schur_seq->sync_local<double>({_Hpp->get_buffer()});
+      }
+
+      // we also need to possibly transfer _xp back to host memory
+      if (_linearSolver->result_gpu()) {
+        sync_x = engine->create_op_sequence();
+        sync_x->sync_local<double>({_xp});
+      }
+
+    });
+
+    #ifdef SERIALIZE_PIPELINE
+    gpu_alloc_task.wait();
+    #endif
+
+    // Set up linear solver
+    task_solver_setup = std::async(async_mode, [_linearSolver=_linearSolver, 
+    gpu_alloc_task=gpu_alloc_task, _Hpp=_Hpp, _xp=_xp, _bschur=_bschur]() {
+      gpu_alloc_task.get();
+      auto row_sort = std::async(async_mode, [&]() {_Hpp->sort_row_indices();});
+      auto col_sort = std::async(async_mode, [&]() {_Hpp->sort_col_indices();});
+      row_sort.get();
+      col_sort.get();
+      _linearSolver->setup(_Hpp, _xp, _bschur);
+    });
+
+    #ifdef SERIALIZE_PIPELINE
+    task_solver_setup.wait();
+    #endif
+
+    mapMemory();
+
+    return true;
+  }
+
+
     auto tr1 = std::chrono::high_resolution_clock::now();
   // std::cout << "Reserve time: " << std::chrono::duration<double>(tr1-tr0).count() << "\n";
 
@@ -371,12 +447,6 @@ bool BlockSolver2::buildStructure(bool zeroBlocks)
   gpu_alloc2.wait();
   #endif
 
-
-
-  if (! _doSchur) {
-    throw std::runtime_error("BlockSolver2: Non-schur solving untested!");
-    return true;
-  }
 
   task_reserve_Hschur = std::async(async_mode, [_alloc_type=_alloc_type, _Hschur=_Hschur, _optimizer=_optimizer, explicit_schur]() {
 
@@ -572,62 +642,8 @@ task_rec_landmark = std::async(async_mode, [gpu_alloc_task=gpu_alloc_task, gpu_a
   #endif
 
   // start of code for mapping allocated blocks
-  gpu_alloc_task.get();
-  // now map memory of diagonals
-    poseIdx = 0;
-    landmarkIdx = 0;
-    for (size_t i = 0; i < _optimizer->indexMapping().size(); ++i) {
-    OptimizableGraph::Vertex* v = _optimizer->indexMapping()[i];
-    if (! v->marginalized()){
-      auto ptr = _Hpp->get_block_ptr(poseIdx, poseIdx);
-      v->mapHessianMemory(ptr);
-      ++poseIdx;
-    } else {
-      auto ptr = _Hll->get_block_ptr(landmarkIdx, landmarkIdx);
-      v->mapHessianMemory(ptr);
-      ++landmarkIdx;
-    }
-  }
-  assert(poseIdx == _numPoses && landmarkIdx == _numLandmarks);
+  mapMemory();
 
-  // now map the Hpl blocks
-  for (SparseOptimizer::EdgeContainer::const_iterator it=_optimizer->activeEdges().begin(); it!=_optimizer->activeEdges().end(); ++it){
-    OptimizableGraph::Edge* e = *it;
-
-    for (size_t viIdx = 0; viIdx < e->vertices().size(); ++viIdx) {
-      OptimizableGraph::Vertex* v1 = (OptimizableGraph::Vertex*) e->vertex(viIdx);
-      int ind1 = v1->hessianIndex();
-      if (ind1 == -1)
-        continue;
-      int indexV1Bak = ind1;
-      for (size_t vjIdx = viIdx + 1; vjIdx < e->vertices().size(); ++vjIdx) {
-        OptimizableGraph::Vertex* v2 = (OptimizableGraph::Vertex*) e->vertex(vjIdx);
-        int ind2 = v2->hessianIndex();
-        if (ind2 == -1)
-          continue;
-        ind1 = indexV1Bak;
-        bool transposedBlock = ind1 > ind2;
-        if (transposedBlock){ // make sure, we allocate the upper triangle block
-          swap(ind1, ind2);
-        }
-        if (! v1->marginalized() && !v2->marginalized()){
-          auto ptr = _Hpp->get_block_ptr(ind1, ind2);
-          e->mapHessianMemory(ptr, viIdx, vjIdx, transposedBlock);
-        } else if (v1->marginalized() && v2->marginalized()){
-          auto ptr = _Hll->get_block_ptr(ind1-_numPoses, ind2-_numPoses);
-          e->mapHessianMemory(ptr, viIdx, vjIdx, false);
-        } else { 
-          if (v1->marginalized()){ 
-            auto ptr = _Hpl->get_block_ptr(v2->hessianIndex(),v1->hessianIndex()-_numPoses);
-            e->mapHessianMemory(ptr, viIdx, vjIdx, true); // transpose the block before writing to it
-          } else {
-            auto ptr = _Hpl->get_block_ptr(v1->hessianIndex(),v2->hessianIndex()-_numPoses);
-            e->mapHessianMemory(ptr, viIdx, vjIdx, false); // directly the block
-          }
-        }
-      }
-    }
-  }
 
   task_init_Hschur = std::async(async_mode, [this, alloc_task1 = gpu_alloc_task,
   alloc_task2 = task_reserve_Hschur]() {
@@ -679,12 +695,49 @@ bool BlockSolver2::updateStructure(const std::vector<HyperGraph::Vertex*>& vset,
 }
 
 bool BlockSolver2::solve(){
-  if (! _doSchur){
-    throw std::runtime_error("Non-schur block solver not yet implemented!");
-  }
+
   auto stats = _ba_stats;
   double t=get_monotonic_time();
   double t0 = t;
+
+  if (! _doSchur){
+
+    // Hpp and bp/bschur are already synced
+    task_solver_setup.get();
+    // Solve
+    if (Schur_seq) {
+      Schur_seq->execute();
+    }
+    bool ok = _linearSolver->solve(_Hpp, _xp, _bschur);
+    // Transfer back
+    if (_linearSolver->result_gpu()) {
+      sync_x->execute();
+    }
+    memcpy(_x, _xp->map(), _sizePoses*sizeof(double));
+
+    // Log old and new stats
+    G2OBatchStatistics* globalStats = G2OBatchStatistics::globalStats();
+    if (globalStats) {
+      globalStats->timeLinearSolver = get_monotonic_time() - t;
+      globalStats->hessianDimension = globalStats->hessianPoseDimension =
+          _Hpp->num_scalar_cols();
+    }
+
+    if (stats) {
+      auto & bstats = stats->solver_stats.back();
+      bstats.time_total = get_monotonic_time()-t0;
+      bstats.time = t0 - g2o::gpu::BAStats::getInitTime();
+
+      // record dimensions
+      bstats.hpp_rows = _Hpp->num_scalar_rows();
+      bstats.hpp_cols = _Hpp->num_scalar_cols();
+      bstats.hpp_nnz = _Hpp->num_non_zeros();
+
+    }
+
+    return ok;
+  }
+
 
   auto init_b = [&](){
     // copy _bp into _bschur
@@ -909,6 +962,11 @@ auto tc = get_monotonic_time();
       iBase+=_sizePoses;
     v->copyB(_b+iBase);
   }
+
+  if (!_doSchur) { // TODO: Make other path do that transfer here as well
+    memcpy(_bschur->map(), _b, _sizePoses * sizeof(double));
+  }
+
   sync_H->execute();
   auto td = get_monotonic_time();
   return 0;
@@ -967,6 +1025,65 @@ void BlockSolver2::setWriteDebug(bool writeDebug)
 bool BlockSolver2::saveHessian(const std::string& fileName) const
 {
   throw std::runtime_error("BlockSolver2: saveHessian not implemented!");
+}
+
+void BlockSolver2::mapMemory() {
+  gpu_alloc_task.get();
+  // now map memory of diagonals
+  int poseIdx = 0;
+  int landmarkIdx = 0;
+  for (size_t i = 0; i < _optimizer->indexMapping().size(); ++i) {
+    OptimizableGraph::Vertex* v = _optimizer->indexMapping()[i];
+    if (! v->marginalized()){
+      auto ptr = _Hpp->get_block_ptr(poseIdx, poseIdx);
+      v->mapHessianMemory(ptr);
+      ++poseIdx;
+    } else {
+      auto ptr = _Hll->get_block_ptr(landmarkIdx, landmarkIdx);
+      v->mapHessianMemory(ptr);
+      ++landmarkIdx;
+    }
+  }
+  assert(poseIdx == _numPoses && landmarkIdx == _numLandmarks);
+
+  // now map the Hpl blocks
+  for (SparseOptimizer::EdgeContainer::const_iterator it=_optimizer->activeEdges().begin(); it!=_optimizer->activeEdges().end(); ++it){
+    OptimizableGraph::Edge* e = *it;
+
+    for (size_t viIdx = 0; viIdx < e->vertices().size(); ++viIdx) {
+      OptimizableGraph::Vertex* v1 = (OptimizableGraph::Vertex*) e->vertex(viIdx);
+      int ind1 = v1->hessianIndex();
+      if (ind1 == -1)
+        continue;
+      int indexV1Bak = ind1;
+      for (size_t vjIdx = viIdx + 1; vjIdx < e->vertices().size(); ++vjIdx) {
+        OptimizableGraph::Vertex* v2 = (OptimizableGraph::Vertex*) e->vertex(vjIdx);
+        int ind2 = v2->hessianIndex();
+        if (ind2 == -1)
+          continue;
+        ind1 = indexV1Bak;
+        bool transposedBlock = ind1 > ind2;
+        if (transposedBlock){ // make sure, we allocate the upper triangle block
+          swap(ind1, ind2);
+        }
+        if (! v1->marginalized() && !v2->marginalized()){
+          auto ptr = _Hpp->get_block_ptr(ind1, ind2);
+          e->mapHessianMemory(ptr, viIdx, vjIdx, transposedBlock);
+        } else if (v1->marginalized() && v2->marginalized()){
+          auto ptr = _Hll->get_block_ptr(ind1-_numPoses, ind2-_numPoses);
+          e->mapHessianMemory(ptr, viIdx, vjIdx, false);
+        } else { 
+          if (v1->marginalized()){ 
+            auto ptr = _Hpl->get_block_ptr(v2->hessianIndex(),v1->hessianIndex()-_numPoses);
+            e->mapHessianMemory(ptr, viIdx, vjIdx, true); // transpose the block before writing to it
+          } else {
+            auto ptr = _Hpl->get_block_ptr(v1->hessianIndex(),v2->hessianIndex()-_numPoses);
+            e->mapHessianMemory(ptr, viIdx, vjIdx, false); // directly the block
+          }
+        }
+      }
+    }
+  }
 }
 
 }
