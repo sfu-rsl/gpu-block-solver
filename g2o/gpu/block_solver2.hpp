@@ -107,7 +107,7 @@ void BlockSolver2::deallocate()
 {
 
   // std::cout << "BlockSolver2: Deallocating!\n";
-
+  // auto t0 = get_monotonic_time();
   // wait for all tasks 
   if (gpu_alloc_task.valid()) {
     gpu_alloc_task.get();
@@ -135,25 +135,48 @@ void BlockSolver2::deallocate()
   if (task_rec_Hschur.valid()) {
     task_rec_Hschur.get();
   }
-
+  // auto t1 = get_monotonic_time();
+  // std::cout << "BlockSolver2: Waiting for tasks took " << t1-t0 << " seconds.\n";
   // Multiplication objects
+  engine->recycle_sequence(mult_HplinvHll);
+  engine->recycle_sequence(mult_bschur);
+  engine->recycle_sequence(mult_Hschur);
+  engine->recycle_sequence(mult_HplTxp);
+  engine->recycle_sequence(mult_Hllinv);
+  engine->recycle_sequence(inversion_op);
+
   mult_HplinvHll.reset();
   mult_bschur.reset();
   mult_Hschur.reset();
   mult_HplTxp.reset();
   mult_Hllinv.reset();
   inversion_op.reset();
-
+  // auto t2 = get_monotonic_time();
+  // std::cout << "BlockSolver2: Waiting for mult objects took " << t2-t1 << " seconds.\n";
   // Sequences
+
+  engine->recycle_sequence(Schur_seq2);
+  engine->recycle_sequence(Schur_seq);
+  engine->recycle_sequence(bschur_seq);
+  engine->recycle_sequence(set_lambda_seq);
+  engine->recycle_sequence(restore_diagonal_seq);
+
   Schur_seq2.reset();
   Schur_seq.reset();
   bschur_seq.reset();
   set_lambda_seq.reset();
   restore_diagonal_seq.reset();
 
+  // auto t3 = get_monotonic_time();
+  // std::cout << "BlockSolver2: Waiting for sequences took " << t3-t2 << " seconds.\n";
+
   // Sync objects
+  engine->recycle_sequence(sync_H);
+  engine->recycle_sequence(sync_x);
   sync_H.reset();
   sync_x.reset();
+  // auto t4 = get_monotonic_time();
+  // std::cout << "BlockSolver2: Waiting for sync objects took " << t4-t3 << " seconds.\n";
 
   // Matrices
   _Hpp.reset();
@@ -163,13 +186,17 @@ void BlockSolver2::deallocate()
   _Hllinv.reset();
   _HplinvHll.reset();
 
+  // auto t5 = get_monotonic_time();
+  // std::cout << "BlockSolver2: Waiting for matrices took " << t5-t4 << " seconds.\n";
+
   // Vectors
   _bschur.reset();
   _bl.reset();
   _xp.reset();
   _xl.reset();
   _lambda.reset();
-
+  // auto t6 = get_monotonic_time();
+  // std::cout << "BlockSolver2: Waiting for vectors took " << t6-t5 << " seconds.\n";
   // std::cout<< "Deallocated!\n";
 }
 
